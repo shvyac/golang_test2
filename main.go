@@ -74,7 +74,12 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 func main() {
 	// Call the Main2 function from the subpack package
-	subpack.Main22()
+	qsodatas := subpack.Readfile()
+
+	for _, qso := range qsodatas {
+		fmt.Print(qso.Callsign, ", ")
+	}
+	fmt.Println("ZlogQso: ", len(qsodatas), "records")
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("Shapes (Ebitengine Demo)")
