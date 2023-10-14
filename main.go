@@ -19,6 +19,8 @@ import (
 	"image/color"
 	"log"
 
+	"golang_test2/subpack"
+
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -71,6 +73,9 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
+	// Call the Main2 function from the subpack package
+	subpack.Main22()
+
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("Shapes (Ebitengine Demo)")
 	if err := ebiten.RunGame(&Game{}); err != nil {
