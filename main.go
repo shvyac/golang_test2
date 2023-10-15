@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	screenWidth  = 800
-	screenHeight = 600
-	space        = 10
-	plotWidth    = screenWidth - space*2
-	plotHeight   = screenHeight - space*2
+	screenWidth      = 800
+	screenHeight     = 1200
+	space            = 10
+	plotWidth        = screenWidth - space*2
+	plotHeight       = screenHeight - space*2
+	contestTimeStart = "2023/10/0121:00"
+	contestTimeEnd   = "2023/10/0221:00"
 )
 
 type Game struct {
@@ -39,6 +41,7 @@ var gLatestWorkingNo int
 var timestarted time.Time
 var timelinesDrawed bool
 var accImage *ebiten.Image
+var bands []string
 
 func init() {
 	gZlogqso = subpack.Readfile()
@@ -46,6 +49,7 @@ func init() {
 	ebiten.SetTPS(1)
 	gLatestWorkingNo = 1
 	timelinesDrawed = false
+	bands = []string{"3.5", "7", "14", "21", "28", "50"}
 }
 
 func (g *Game) Update() error {
@@ -90,19 +94,41 @@ func ToUnixTime(timeString string) int64 {
 	return t.Unix()
 }
 func DrawTimelines(screen *ebiten.Image) {
+	strokeWidth := float32(.5)
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	layout := "2006/01/0215:04"
+	ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
+	fmt.Print("ts: ", ts.Hour(), ts.Minute(), ", ")
+	if err != nil {
+		fmt.Println(err)
+	}
 	ypos := space * 3
-	step_y := plotHeight / (1 * 60)
+	minutes := 2 * 60
+	step_y := plotHeight / minutes
 
-	for i := 0; i <= 1*60; i++ {
+	for i := 0; i <= minutes; i++ {
 		xs := float32(space * 3)
-		if i%10 == 0 {
-			xs = space * 2
-		} else if i%60 == 0 {
+		vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
+		if i%60 == 0 {
 			xs = space
+			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
+			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:", ts.Hour()), int(5), ypos-10)
+		} else if i%10 == 0 {
+			xs = space * 2
+			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
+			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf(":%02d", ts.Minute()), int(10), ypos-10)
 		}
-		vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), 1, color.White, true)
+		ts = ts.Add(time.Minute)
 		ypos += step_y
 	}
+	xpos := space * 3
+	xinc := (plotWidth - space*2) / len(bands)
+	for _, ba := range bands {
+		vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth, color.White, true)
+		ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%s", ba), xpos+xinc/2, space)
+		xpos += xinc
+	}
+	vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth, color.White, true)
 	timelinesDrawed = true
 }
 
@@ -111,32 +137,28 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		DrawTimelines(screen)
 	}
 
-	if g.count%10 == 0 {
+	for _, gp := range gPlotqso {
+		xpos := space * 3
+		ypos := space * 3
+		width := plotWidth / len(bands)
 
-		//fmt.Println("Draw: ", g.count, ", ")
-		//fmt.Print("ZlogQso: ", gZlogqso[g.count], ", ")
+		te := time.Unix(gp.UnixEnd, 0)
+		ts := time.Unix(gp.UnixStart, 0)
+		tt := te.Sub(ts)
+		height := tt.Minutes() * (plotHeight / 60)
+		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), tt.Minutes())
+		//fmt.Printf("gp.UnixEnd: %d, gp.UnixStart: %d, height: %d\n", gp.UnixEnd, gp.UnixStart, height)
+		for i, ba := range bands {
+			if gp.Band == ba {
+				xpos += (plotWidth / len(bands)) * i
+				ypos += ts.Minute() * (plotHeight / 60)
+				vector.StrokeRect(screen, float32(xpos), float32(ypos), float32(width), float32(height), 1, color.White, false)
+			}
+		}
 	}
-
-	//vector.StrokeLine(screen, space, space, space+plotWidth, space, 1, color.RGBA{0xff, 0xff, 0xff, 0xff}, true)
-	//vector.StrokeLine(screen, space, space+plotHeight, space+plotWidth, space+plotHeight, 1, color.RGBA{0xff, 0xff, 0x00, 0xff}, true)
-
-	for i := 0; i < g.count; i += 20 {
-		//cf := float32(i)
-		//vector.StrokeLine(screen, space, space+cf, space+plotWidth, space+cf, 1, color.White, true)
-	}
-
-	//for i := 0; i < g.count; i += 10 {
-	cf := float32(g.count)
-	//vector.DrawFilledRect(screen, 50+cf, 50+cf, 100+cf, 100+cf, color.RGBA{0x80, 0x80, 0x80, 0xc0}, true)
-
-	vector.StrokeRect(screen, space+plotWidth/2, space, plotWidth/3, cf, 2, color.RGBA{0x00, 0xff, 0x00, 0xff}, false)
-	//}
 	screen.DrawImage(accImage, &ebiten.DrawImageOptions{})
-	//vector.DrawFilledCircle(screen, 400, 400, 100, color.RGBA{0x80, 0x00, 0x80, 0x80}, true)
-	//vector.StrokeCircle(screen, 400, 400, 10+cf, 10+cf/2, color.RGBA{0xff, 0x80, 0xff, 0xff}, true)
-
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("ActualTPS: %0.2f", ebiten.ActualTPS()))
-	ebitenutil.DebugPrintAt(screen, fmt.Sprint(g.count), 0, 20)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprint(g.count), 200, 00)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
