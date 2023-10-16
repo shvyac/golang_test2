@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image/color"
 	"log"
-	"math"
 	"time"
 
 	"golang_test2/subpack"
@@ -20,8 +19,9 @@ const (
 	space            = 10
 	plotWidth        = screenWidth - space*2
 	plotHeight       = screenHeight - space*2
-	contestTimeStart = "2023/10/0121:00"
-	contestTimeEnd   = "2023/10/0221:00"
+	contestTimeStart = "2015/04/2601:00"
+	contestTimeEnd   = "2015/04/2621:00"
+	plotRangeMinutes = 60 * 4
 )
 
 type Game struct {
@@ -42,19 +42,20 @@ var timestarted time.Time
 var timelinesDrawed bool
 var accImage *ebiten.Image
 var bands []string
+var bandPlotWidth int
 
 func init() {
 	gZlogqso = subpack.Readfile()
 	timestarted = time.Now()
 	ebiten.SetTPS(1)
-	gLatestWorkingNo = 1
+	gLatestWorkingNo = 0
 	timelinesDrawed = false
 	bands = []string{"3.5", "7", "14", "21", "28", "50"}
+	bandPlotWidth = (plotWidth - space*2) / len(bands)
 }
 
 func (g *Game) Update() error {
 	g.count++
-	g.count %= plotHeight
 
 	qsonow := checkElapsedTime()
 	if qsonow.Callsign != "NA" {
@@ -68,8 +69,9 @@ func Add(a subpack.ZlogQso) error {
 	ut := ToUnixTime(a.DateQSO + a.TimeQSO)
 	for _, gp := range gPlotqso {
 		if gp.Band == a.Band {
-			if (ut - gp.UnixEnd) < 10*60 {
+			if (ut - gp.UnixEnd) <= 10*60 {
 				gp.UnixEnd = ut
+				//fmt.Println("gPlotqso: ", len(gPlotqso),gp.WorkingNo, gp.UnixStart, gp.UnixEnd, gp.Band)
 				return nil
 			}
 		}
@@ -78,10 +80,11 @@ func Add(a subpack.ZlogQso) error {
 	plot := PlotQso{
 		WorkingNo: gLatestWorkingNo,
 		UnixStart: ut,
-		UnixEnd:   ut,
+		UnixEnd:   ut + 60,
 		Band:      a.Band,
 	}
 	gPlotqso = append(gPlotqso, &plot)
+	//fmt.Println("gPlotqso: ", len(gPlotqso),gPlotqso[len(gPlotqso)-1].WorkingNo, gPlotqso[len(gPlotqso)-1].UnixStart, gPlotqso[len(gPlotqso)-1].UnixEnd, gPlotqso[len(gPlotqso)-1].Band)
 	return nil
 }
 
@@ -103,7 +106,7 @@ func DrawTimelines(screen *ebiten.Image) {
 		fmt.Println(err)
 	}
 	ypos := space * 3
-	minutes := 2 * 60
+	minutes := plotRangeMinutes
 	step_y := plotHeight / minutes
 
 	for i := 0; i <= minutes; i++ {
@@ -112,7 +115,7 @@ func DrawTimelines(screen *ebiten.Image) {
 		if i%60 == 0 {
 			xs = space
 			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
-			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:", ts.Hour()), int(5), ypos-10)
+			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:00", ts.Hour()), int(5), ypos-10)
 		} else if i%10 == 0 {
 			xs = space * 2
 			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
@@ -122,7 +125,7 @@ func DrawTimelines(screen *ebiten.Image) {
 		ypos += step_y
 	}
 	xpos := space * 3
-	xinc := (plotWidth - space*2) / len(bands)
+	xinc := bandPlotWidth
 	for _, ba := range bands {
 		vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth, color.White, true)
 		ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%s", ba), xpos+xinc/2, space)
@@ -140,19 +143,25 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for _, gp := range gPlotqso {
 		xpos := space * 3
 		ypos := space * 3
-		width := plotWidth / len(bands)
+		width := bandPlotWidth
+		widthPad := width / 10
 
 		te := time.Unix(gp.UnixEnd, 0)
 		ts := time.Unix(gp.UnixStart, 0)
-		tt := te.Sub(ts)
-		height := tt.Minutes() * (plotHeight / 60)
+		boxHeight := te.Sub(ts)
+		cs := time.Unix(ToUnixTime(contestTimeStart), 0)
+		boxStart := ts.Sub(cs)
+		height := boxHeight.Minutes() * (plotHeight / plotRangeMinutes)
 		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), tt.Minutes())
 		//fmt.Printf("gp.UnixEnd: %d, gp.UnixStart: %d, height: %d\n", gp.UnixEnd, gp.UnixStart, height)
 		for i, ba := range bands {
 			if gp.Band == ba {
-				xpos += (plotWidth / len(bands)) * i
-				ypos += ts.Minute() * (plotHeight / 60)
-				vector.StrokeRect(screen, float32(xpos), float32(ypos), float32(width), float32(height), 1, color.White, false)
+				xpos += width*i + widthPad
+				ypos += int(boxStart.Minutes() * (plotHeight / plotRangeMinutes))
+				//fmt.Println("ts.Minute() ", xpos, ypos, ts.Minute(), height)
+				vector.StrokeRect(screen, float32(xpos), float32(ypos),
+					float32(width-2*widthPad), float32(height), 1, color.White, false)
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", gp.WorkingNo), xpos, ypos)
 			}
 		}
 	}
@@ -182,25 +191,28 @@ func main() {
 }
 
 func checkElapsedTime() subpack.ZlogQso {
-	min1 := 0.0
-	min2 := 0.0
-	for _, record := range gZlogqso {
-		dur := record.TimeQSO[0:2] + "m" + record.TimeQSO[3:5] + "s"
-		qsoelapsedSeconds2, _ := time.ParseDuration(dur)
-		min1 = qsoelapsedSeconds2.Seconds()
-		nowelapsedSeconds := time.Since(timestarted)
-		min2 = math.Floor(nowelapsedSeconds.Seconds())
+	for _, qso := range gZlogqso {
+		contestStart, _ := time.Parse("2006/01/0215:04", contestTimeStart)
+		clockElapsedSeconds := time.Since(timestarted).Seconds()
+		clockElapsedMinutes := clockElapsedSeconds
+		contestElapsed := contestStart.Add(time.Duration(clockElapsedMinutes) * time.Minute)
 
-		if min1 == min2 {
-			//fmt.Printf("The elapsed time for record %f %s has passed.\n", min1, record.Callsign)
-			return *record
+		//fmt.Println(contestElapsed.Format("2006/01/02 15:04"))
+		elaDate := contestElapsed.Format("2006/01/02")
+		elaTime := contestElapsed.Format("15:04")
+		// dur := qso.TimeQSO[0:2] + "m" + qso.TimeQSO[3:5] + "s"
+		// qsoelapsedSeconds2, _ := time.ParseDuration(dur)
+		// min1 = qsoelapsedSeconds2.Seconds()
+		// nowelapsedSeconds := time.Since(timestarted)
+		// min2 = math.Floor(nowelapsedSeconds.Seconds())
+		conDate := qso.DateQSO
+		conTime := qso.TimeQSO
+
+		if conDate == elaDate && conTime == elaTime {
+			return *qso
 		} else {
-			//fmt.Printf("The elapsed time for record %s has not passed yet.\n", record.CallSign)
-			//return *gZlogqso[0]
 		}
-		//fmt.Println(min1, min2)
 	}
-	//fmt.Println(min1, min2)
 	na := *gZlogqso[0]
 	na.Callsign = "NA"
 	return na
