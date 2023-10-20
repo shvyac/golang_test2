@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"golang_test2/subpack"
+	"showQsoTX2/subpack"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"

@@ -1,4 +1,4 @@
-module golang_test2
+module showQsoTX2
 
 go 1.21.3
 
