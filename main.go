@@ -10,6 +10,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
@@ -19,13 +20,14 @@ const (
 	space            = 10
 	plotWidth        = screenWidth - space*2
 	plotHeight       = screenHeight - space*2
-	contestTimeStart = "2015/04/2601:00"
+	contestTimeStart = "2015/04/2521:00"
 	contestTimeEnd   = "2015/04/2621:00"
-	plotRangeMinutes = 60 * 4
+	plotRangeMinutes = 60 * 3
 )
 
 type Game struct {
 	count int
+	keys  []ebiten.Key
 }
 
 type PlotQso struct {
@@ -35,23 +37,29 @@ type PlotQso struct {
 	Band      string
 }
 
-var gZlogqso []*subpack.ZlogQso
-var gPlotqso []*PlotQso
-var gLatestWorkingNo int
-var timestarted time.Time
-var timelinesDrawed bool
-var accImage *ebiten.Image
-var bands []string
-var bandPlotWidth int
+var (
+	gZlogqso         []*subpack.ZlogQso
+	gPlotqso         []*PlotQso
+	gLatestWorkingNo int
+	timeAppStarted   time.Time
+	timelinesDrawed  bool
+	accImage         *ebiten.Image
+	bands            []string
+	bandPlotWidth    int
+	contestShowStart time.Time
+	lastInputTime    time.Time
+	acceptInput      bool
+)
 
 func init() {
 	gZlogqso = subpack.Readfile()
-	timestarted = time.Now()
-	ebiten.SetTPS(1)
+	timeAppStarted = time.Now()
+	ebiten.SetTPS(2)
 	gLatestWorkingNo = 0
 	timelinesDrawed = false
 	bands = []string{"3.5", "7", "14", "21", "28", "50"}
 	bandPlotWidth = (plotWidth - space*2) / len(bands)
+	contestShowStart = ToJstTime(contestTimeStart)
 }
 
 func (g *Game) Update() error {
@@ -62,6 +70,36 @@ func (g *Game) Update() error {
 		fmt.Println(qsonow.TimeQSO, qsonow.Callsign, qsonow.Band)
 		Add(qsonow)
 	}
+	//g.keys = inpututil.AppendPressedKeys(g.keys[:0])
+
+	if acceptInput && inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
+		acceptInput = false
+		lastInputTime = time.Now()
+		fmt.Println("KeyArrowDown", lastInputTime.Format("2006/01/02 15:04:05"))
+		contestShowStart = contestShowStart.Add(time.Hour)
+		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
+
+		if contestShowStart.Before(ToJstTime(contestTimeStart)) {
+			//contestShowStart = ToTime(contestTimeStart)
+		} else if contestShowStart.After(ToJstTime(contestTimeEnd)) {
+			//contestShowStart = ToTime(contestTimeEnd)
+		}
+		//fmt.Println(contestShowStart.Format("2006/01/02 15:04"))
+		timelinesDrawed = false
+	} else if acceptInput && inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
+		acceptInput = false
+		lastInputTime = time.Now()
+		//fmt.Println("KeyArrowUp", lastInputTime.Format("2006/01/02 15:04:05"))
+		contestShowStart = contestShowStart.Add(-time.Hour)
+		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
+		timelinesDrawed = false
+	}
+
+	if !acceptInput && time.Since(lastInputTime).Seconds() > 1 {
+		acceptInput = true
+		//fmt.Println("acceptInput = true", time.Now().Format("2006/01/02 15:04:05"))
+	}
+
 	return nil
 }
 
@@ -96,11 +134,23 @@ func ToUnixTime(timeString string) int64 {
 	}
 	return t.Unix()
 }
+func ToJstTime(timeStr string) time.Time {
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	layout := "2006/01/0215:04"
+	ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return ts
+}
+
 func DrawTimelines(screen *ebiten.Image) {
+	accImage.Clear()
 	strokeWidth := float32(.5)
 	loc, _ := time.LoadLocation("Asia/Tokyo")
 	layout := "2006/01/0215:04"
 	ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
+	ts = contestShowStart
 	fmt.Print("ts: ", ts.Hour(), ts.Minute(), ", ")
 	if err != nil {
 		fmt.Println(err)
@@ -108,7 +158,7 @@ func DrawTimelines(screen *ebiten.Image) {
 	ypos := space * 3
 	minutes := plotRangeMinutes
 	step_y := plotHeight / minutes
-
+	// horizontal lines, hours and minutes
 	for i := 0; i <= minutes; i++ {
 		xs := float32(space * 3)
 		vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth, color.White, true)
@@ -124,6 +174,7 @@ func DrawTimelines(screen *ebiten.Image) {
 		ts = ts.Add(time.Minute)
 		ypos += step_y
 	}
+	// vertical lines, bands
 	xpos := space * 3
 	xinc := bandPlotWidth
 	for _, ba := range bands {
@@ -148,11 +199,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		te := time.Unix(gp.UnixEnd, 0)
 		ts := time.Unix(gp.UnixStart, 0)
+
+		// jst := time.FixedZone("JST", 9*60*60)
+		// te = te.In(jst)
+		// ts = ts.In(jst)
 		boxHeight := te.Sub(ts)
-		cs := time.Unix(ToUnixTime(contestTimeStart), 0)
+		cs := ToJstTime(contestTimeStart) //time.Unix(ToUnixTime(contestTimeStart), 0)
+		cs = time.Unix(ToUnixTime(contestShowStart.Format("2006/01/0215:04")), 0)
+		//cs2 := contestShowStart
+		//fmt.Println("cs: ", cs.Format("2006/01/02 15:04 "), cs2.Format("2006/01/02 15:04"))
 		boxStart := ts.Sub(cs)
 		height := boxHeight.Minutes() * (plotHeight / plotRangeMinutes)
-		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), tt.Minutes())
+		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), cs.Format("15:04"))
 		//fmt.Printf("gp.UnixEnd: %d, gp.UnixStart: %d, height: %d\n", gp.UnixEnd, gp.UnixStart, height)
 		for i, ba := range bands {
 			if gp.Band == ba {
@@ -168,6 +226,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	screen.DrawImage(accImage, &ebiten.DrawImageOptions{})
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("ActualTPS: %0.2f", ebiten.ActualTPS()))
 	ebitenutil.DebugPrintAt(screen, fmt.Sprint(g.count), 200, 00)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprint(contestShowStart.Format("2006/01/02 15:04")), 300, 00)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -175,6 +234,9 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
+	acceptInput = true
+	lastInputTime = time.Now()
+
 	accImage = ebiten.NewImage(screenWidth, screenHeight)
 	for _, qso := range gZlogqso {
 		fmt.Print(qso.Callsign, ", ")
@@ -193,7 +255,7 @@ func main() {
 func checkElapsedTime() subpack.ZlogQso {
 	for _, qso := range gZlogqso {
 		contestStart, _ := time.Parse("2006/01/0215:04", contestTimeStart)
-		clockElapsedSeconds := time.Since(timestarted).Seconds()
+		clockElapsedSeconds := time.Since(timeAppStarted).Seconds()
 		clockElapsedMinutes := clockElapsedSeconds
 		contestElapsed := contestStart.Add(time.Duration(clockElapsedMinutes) * time.Minute)
 
