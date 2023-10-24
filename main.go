@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"log"
+	"os"
 	"time"
 
 	"showQsoTX2/subpack"
@@ -15,13 +16,11 @@ import (
 )
 
 const (
-	screenWidth      = 2400
+	screenWidth      = 1200
 	screenHeight     = 1200
 	space            = 10
 	plotWidth        = screenWidth - space*2
 	plotHeight       = screenHeight - space*2
-	contestTimeStart = "2015/04/2521:00"
-	contestTimeEnd   = "2015/04/2621:00"
 	plotRangeMinutes = 60 * 3
 )
 
@@ -30,76 +29,81 @@ type Game struct {
 	keys  []ebiten.Key
 }
 
-type PlotQsoBox struct {
-	WorkingNo int
-	UnixStart int64
-	UnixEnd   int64
-	Band      string
-	//NumberQso int
+type BoxQso struct {
+	BoxNo    int
+	BoxStart time.Time
+	BoxEnd   time.Time
+	BoxBand  string
 }
-type PlotQso struct {
-	UnixStart int64
+type CallQso struct {
+	CallStart time.Time
 	Callsign  string
 }
 
 var (
 	gZlogqso         []*subpack.ZlogQso
-	gPlotQsoBox      []*PlotQsoBox
-	gPlotCall        map[int][]*PlotQso
+	gPlotQsoBox      []*BoxQso
+	gPlotCall        map[int][]*CallQso
 	gLatestWorkingNo int
+	ReadTime         string
 	timeAppStarted   time.Time
 	timelinesDrawed  bool
 	accImage         *ebiten.Image
 	bands            []string
-	bandPlotWidth    int
+	bandPlotWidth    float32
 	contestShowStart time.Time
-	lastInputTime    time.Time
-	acceptInput      bool
+	lastKeyinTime    time.Time
+	acceptKeyin      bool
+	QsoBoxNo         int
+	gfile            *os.File
+	contestTimeStart = time.Date(2015, 4, 26, 02, 0, 0, 0, time.Local) //"2015/04/2521:00"
+	contestTimeEnd   = time.Date(2015, 4, 26, 21, 0, 0, 0, time.Local) //"2015/04/2621:00"
 )
 
 func init() {
 	gZlogqso = subpack.Readfile()
 	timeAppStarted = time.Now()
-	ebiten.SetTPS(4)
+	ebiten.SetTPS(1)
 	gLatestWorkingNo = 0
 	timelinesDrawed = false
 	bands = []string{"3.5", "7", "14", "21", "28", "50", "se1", "se2"}
-	bandPlotWidth = (plotWidth - space*2) / len(bands)
-	contestShowStart = ToJstTimeFromString(contestTimeStart)
-	gPlotCall = make(map[int][]*PlotQso)
+	bandPlotWidth = float32((plotWidth - space*2) / len(bands))
+	contestShowStart = contestTimeStart
+	gPlotCall = make(map[int][]*CallQso)
+	ReadTime = ""
+	QsoBoxNo = 0
 }
 
 func (g *Game) Update() error {
 	g.count++
-
 	qsonows := checkElapsedTime()
 	for _, qsonow := range qsonows {
 		if qsonow.Callsign != "NA" {
-			fmt.Println(qsonow.TimeQSO, qsonow.Callsign, qsonow.Band)
-			Add(qsonow)
+			fmt.Println("Update--> ", len(qsonows), qsonow.DateTime, qsonow.Callsign, qsonow.Band)
+			AddQso(qsonow)
 		}
 	}
 	//g.keys = inpututil.AppendPressedKeys(g.keys[:0])
 	// KeyArrowDown
-	if acceptInput && inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
-		acceptInput = false
-		lastInputTime = time.Now()
-		fmt.Println("KeyArrowDown", lastInputTime.Format("2006/01/02 15:04:05"))
+	if acceptKeyin && inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
+		acceptKeyin = false
+		lastKeyinTime = time.Now()
+		fmt.Println("KeyArrowDown", lastKeyinTime.Format("2006/01/02 15:04:05"))
 		contestShowStart = contestShowStart.Add(time.Hour)
 		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
 
-		if contestShowStart.Before(ToJstTimeFromString(contestTimeStart)) {
+		if contestShowStart.Before(contestTimeStart) {
 			//contestShowStart = ToTime(contestTimeStart)
-		} else if contestShowStart.After(ToJstTimeFromString(contestTimeEnd)) {
+		} else if contestShowStart.After(contestTimeEnd) {
 			//contestShowStart = ToTime(contestTimeEnd)
 		}
 		//fmt.Println(contestShowStart.Format("2006/01/02 15:04"))
 		timelinesDrawed = false
 	}
 	// KeyArrowUp
-	if acceptInput && inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
-		acceptInput = false
-		lastInputTime = time.Now()
+	if acceptKeyin && inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
+		acceptKeyin = false
+		lastKeyinTime = time.Now()
 		//fmt.Println("KeyArrowUp", lastInputTime.Format("2006/01/02 15:04:05"))
 		contestShowStart = contestShowStart.Add(-time.Hour)
 		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
@@ -121,15 +125,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	screen.DrawImage(accImage, &ebiten.DrawImageOptions{})
 
 	for _, gp := range gPlotQsoBox {
-		xpos := space * 3
-		ypos := space * 3
+		xpos := float32(space * 3)
+		ypos := float32(space * 3)
 		width := bandPlotWidth
 		widthPad := width / 10
-
-		te := time.Unix(gp.UnixEnd, 0)
-		ts := time.Unix(gp.UnixStart, 0)
+		te := gp.BoxEnd
+		ts := gp.BoxStart
 		boxHeight := te.Sub(ts)
-		cs := ToJstTimeFromString(contestTimeStart) //time.Unix(ToUnixTime(contestTimeStart), 0)
+		cs := contestTimeStart //time.Unix(ToUnixTime(contestTimeStart), 0)
 		cs = time.Unix(ToUnixTimeFromString(contestShowStart.Format("2006/01/0215:04")), 0)
 		//cs2 := contestShowStart
 		//fmt.Println("cs: ", cs.Format("2006/01/02 15:04 "), cs2.Format("2006/01/02 15:04"))
@@ -138,71 +141,99 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), cs.Format("15:04"))
 		//fmt.Printf("gp.UnixEnd: %d, gp.UnixStart: %d, height: %d\n", gp.UnixEnd, gp.UnixStart, height)
 		for i, ba := range bands {
-			if gp.Band == ba {
-				xpos += width*i + widthPad
-				ypos += int(boxStart.Minutes() * (plotHeight / plotRangeMinutes))
+			if gp.BoxBand == ba {
+				xpos += width * float32(i) // + widthPad
+				ypos += float32(boxStart.Minutes()) * float32(plotHeight/plotRangeMinutes)
 				//fmt.Println("ts.Minute() ", xpos, ypos, ts.Minute(), height)
 				vector.StrokeRect(screen, float32(xpos), float32(ypos),
 					float32(width-2*widthPad), float32(height), 1, color.RGBA{0xff, 0xff, 0xff, 0xff}, true)
-				startjst := ToJstTimeFromUnix(gp.UnixStart)
-				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", startjst.Format("15:04")), xpos, ypos)
-				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", len(gPlotCall[gp.WorkingNo])), xpos+50, ypos)
-				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", (gp.UnixEnd-gp.UnixStart)/60), xpos+80, ypos)
+				startjst := gp.BoxStart
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", startjst.Format("15:04")), int(xpos), int(ypos))
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", len(gPlotCall[gp.BoxNo])), int(xpos+40), int(ypos))
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%v", gp.BoxEnd.Sub(gp.BoxStart)), int(xpos+0), int(ypos+10))
 			}
 		}
-		for _, pq := range gPlotCall[gp.WorkingNo] {
+		for _, pq := range gPlotCall[gp.BoxNo] {
 			call := pq.Callsign
-			ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", call), xpos+110, ypos)
+			ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", call), int(xpos+60), int(ypos))
 			ypos += 10
 		}
 	}
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("ActualTPS: %0.2f", ebiten.ActualTPS()))
 	ebitenutil.DebugPrintAt(screen, fmt.Sprint(g.count), 200, 00)
 	ebitenutil.DebugPrintAt(screen, fmt.Sprint(contestShowStart.Format("2006/01/02 15:04")), 300, 00)
-	acceptInput = true
+	acceptKeyin = true
 }
 
-func Add(a subpack.ZlogQso) error {
-	ut := ToUnixTimeFromString(a.DateQSO + a.TimeQSO)
+func AddQso(a subpack.ZlogQso) error {
+
+	if a.Callsign == "JH4WBY" {
+		fmt.Print("JH4WBY: ", a.Callsign, a.DateTime, a.Band)
+	}
+	ut := a.DateTime
 	for _, gp := range gPlotQsoBox {
-		if gp.Band == a.Band {
-			if (ut - gp.UnixEnd) <= 10*60 {
-				gp.UnixEnd = ut + 60
-				//gp.NumberQso++
-				//fmt.Println("append gPlotqso: ", len(gPlotqso), gp.WorkingNo, gp.UnixStart, gp.UnixEnd, gp.Band)
-				if !IsCall(gPlotCall, a.Callsign) {
-					gPlotCall[gp.WorkingNo] = append(gPlotCall[gp.WorkingNo],
-						&PlotQso{UnixStart: gp.UnixStart, Callsign: a.Callsign})
+		if gp.BoxBand == a.Band {
+			if ut.Sub(gp.BoxEnd) <= 10*time.Minute {
+				gp.BoxEnd = ut.Add(time.Minute)
+				if !IsCall(gPlotCall[gp.BoxNo], a.Callsign) {
+					gPlotCall[gp.BoxNo] = append(
+						gPlotCall[gp.BoxNo], &CallQso{CallStart: ut, Callsign: a.Callsign})
 				}
 				return nil
 			}
 		}
 	}
-	plot := PlotQsoBox{
-		WorkingNo: gLatestWorkingNo,
-		UnixStart: ut,
-		UnixEnd:   ut + 60,
-		Band:      a.Band,
-		//NumberQso: 1,
+	plot := BoxQso{
+		BoxNo:    gLatestWorkingNo,
+		BoxStart: ut,
+		BoxEnd:   ut.Add(time.Minute),
+		BoxBand:  a.Band,
 	}
-
+	QsoBoxNo = -1
+	for i, qb := range gPlotQsoBox {
+		if qb.BoxBand == plot.BoxBand {
+			t1 := qb.BoxStart.Format("15:04")
+			t2 := qb.BoxEnd.Format("15:04")
+			fmt.Println("\t\t\t\tBox: ", i, t1, t2, qb.BoxBand)
+			QsoBoxNo = qb.BoxNo
+		}
+	}
 	gPlotQsoBox = append(gPlotQsoBox, &plot)
 	//fmt.Println("new gPlotqso: ", len(gPlotqso), gPlotqso[len(gPlotqso)-1].WorkingNo, gPlotqso[len(gPlotqso)-1].UnixStart, gPlotqso[len(gPlotqso)-1].UnixEnd, gPlotqso[len(gPlotqso)-1].Band)
 	//if IsCall(gPlotCall, gLatestWorkingNo-1, a.Callsign) {
 	gPlotCall[gLatestWorkingNo] = append(gPlotCall[gLatestWorkingNo],
-		&PlotQso{UnixStart: ut, Callsign: a.Callsign})
+		&CallQso{CallStart: ut, Callsign: a.Callsign})
 	gLatestWorkingNo++
+
+	if QsoBoxNo > -1 {
+		for i, pq := range gPlotCall[QsoBoxNo] {
+			s1 := pq.CallStart.Format("15:04")
+			fmt.Println("\t\t\t\tCall: ", QsoBoxNo, i, s1, pq.Callsign, plot.BoxBand)
+			_, err := fmt.Fprintln(gfile, QsoBoxNo, s1, pq.Callsign, plot.BoxBand)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		for i, box := range gPlotQsoBox {
+			s1 := box.BoxStart
+			s2 := box.BoxEnd
+			if box.BoxNo == QsoBoxNo && s2.Sub(s1).Minutes() < 10 {
+				box.BoxEnd = box.BoxStart.Add(11 * time.Minute)
+				fmt.Println("\t\t\t\t10Min: ", i, s1, s2, box.BoxEnd.Format("15:04"), box.BoxBand)
+			}
+		}
+	}
 	return nil
 }
 
-func IsCall(MapCalls map[int][]*PlotQso, Callsign string) bool {
+func IsCall(MapCalls []*CallQso, Callsign string) bool {
 	for _, slice := range MapCalls {
-		for _, s := range slice {
-			if s.Callsign == Callsign {
-				//fmt.Printf("Found struct at key %d index %d\n", key, i)
-				return true
-			}
+		//for _, s := range slice {
+		if slice.Callsign == Callsign {
+			//fmt.Printf("Found struct at key %d index %d\n", key, i)
+			return true
 		}
+		//}
 	}
 	return false
 }
@@ -238,43 +269,43 @@ func DrawTimelines(screen *ebiten.Image) {
 	//accImage.Fill(color.RGBA{0xff, 0xff, 0xff, 0xff}) // white
 	//screen.Fill(color.RGBA{0xff, 0xff, 0xff, 0xff})   // white
 	strokeWidth := float32(.5)
-	loc, _ := time.LoadLocation("Asia/Tokyo")
-	layout := "2006/01/0215:04"
-	ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
-	ts = contestShowStart
-	fmt.Print("ts: ", ts.Hour(), ts.Minute(), ", ")
-	if err != nil {
-		fmt.Println(err)
-	}
-	ypos := space * 3
-	minutes := plotRangeMinutes
-	step_y := plotHeight / minutes
+	// loc, _ := time.LoadLocation("Asia/Tokyo")
+	// layout := "2006/01/0215:04"
+	// ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
+	ts := contestShowStart
+	//fmt.Print("ts: ", ts.Hour(), ts.Minute(), ", ")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// }
+	ypos := float32(space * 3)
+	//minutes := plotRangeMinutes
+	step_y := float32(plotHeight / plotRangeMinutes)
 	// horizontal lines, hours and minutes
-	for i := 0; i <= minutes; i++ {
-		xs := float32(space * 3)
-		vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth,
+	xpos := float32(space * 3)
+	for i := 0; i <= plotRangeMinutes; i++ {
+		vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), strokeWidth,
 			color.RGBA{0x80, 0x80, 0x80, 0xff}, true)
 		if i%60 == 0 {
-			xs = space
-			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), 1,
+			xpos = float32(space)
+			vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), 1,
 				color.RGBA{0x00, 0xff, 0x00, 0xff}, true)
-			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:00", ts.Hour()), int(5), ypos-10)
+			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:00", ts.Hour()), int(5), int(ypos-10))
 		} else if i%10 == 0 {
-			xs = space * 2
-			vector.StrokeLine(accImage, xs, float32(ypos), space+plotWidth, float32(ypos), strokeWidth,
+			xpos = float32(space * 2)
+			vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), strokeWidth,
 				color.RGBA{0x80, 0x80, 0x00, 0xff}, true)
-			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf(":%02d", ts.Minute()), int(10), ypos-10)
+			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf(":%02d", ts.Minute()), int(10), int(ypos-10))
 		}
 		ts = ts.Add(time.Minute)
 		ypos += step_y
 	}
 	// vertical lines, bands
-	xpos := space * 3
+	//xpos = space * 3
 	xinc := bandPlotWidth
 	for _, ba := range bands {
 		vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth,
 			color.RGBA{0x80, 0x80, 0x00, 0xff}, true)
-		ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%s", ba), xpos+xinc/2, space)
+		ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%s", ba), int(xpos+xinc/2), space)
 		xpos += xinc
 	}
 	vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth,
@@ -287,8 +318,8 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	acceptInput = true
-	lastInputTime = time.Now()
+	acceptKeyin = true
+	lastKeyinTime = time.Now()
 
 	accImage = ebiten.NewImage(screenWidth, screenHeight)
 	for _, qso := range gZlogqso {
@@ -300,6 +331,13 @@ func main() {
 	ebiten.SetWindowTitle("Shapes (Ebitengine Demo)")
 	ebiten.SetWindowPosition(100, 100)
 
+	f, err := os.Create("log.txt")
+	if err != nil {
+		fmt.Println(err)
+	}
+	gfile = f
+	defer f.Close()
+
 	if err := ebiten.RunGame(&Game{}); err != nil {
 		log.Fatal(err)
 	}
@@ -307,33 +345,27 @@ func main() {
 
 func checkElapsedTime() []subpack.ZlogQso {
 	var QSOs []subpack.ZlogQso
-	contestStart, _ := time.Parse("2006/01/0215:04", contestTimeStart)
-	contestStart = ToJstTimeFromString(contestTimeStart)
+	//contestStart, _ := time.Parse("2006/01/0215:04", contestTimeStart)
+	contestStart := contestTimeStart
 	clockElapsedSeconds := time.Since(timeAppStarted).Seconds()
 	clockElapsedMinutes := clockElapsedSeconds
 	contestElapsed := contestStart.Add(time.Duration(clockElapsedMinutes) * time.Minute)
-
+	if contestElapsed.After(contestTimeEnd) {
+		os.Exit(0)
+	}
 	for _, qso := range gZlogqso {
-
-		//fmt.Println(contestElapsed.Format("2006/01/02 15:04"))
-		//elaDate := contestElapsed.Format("2006/01/02")
-		//elaTime := contestElapsed.Format("15:04")
-		// dur := qso.TimeQSO[0:2] + "m" + qso.TimeQSO[3:5] + "s"
-		// qsoelapsedSeconds2, _ := time.ParseDuration(dur)
-		// min1 = qsoelapsedSeconds2.Seconds()
-		// nowelapsedSeconds := time.Since(timestarted)
-		// min2 = math.Floor(nowelapsedSeconds.Seconds())
-		conDateTime := ToJstTimeFromString(qso.DateQSO + qso.TimeQSO)
+		conDateTime := qso.DateTime // ToJstTimeFromString(qso.DateQSO + qso.TimeQSO)
 		//conTime :=ToJstTimeFromString( qso.TimeQSO)
 		con := conDateTime.Format("15:04")
 		ela := contestElapsed.Format("15:04")
-		if con == ela {
+		if con == ela && ReadTime != ela {
 			QSOs = append(QSOs, *qso)
-		} else if conDateTime.After(contestElapsed) {
+		}
+		if conDateTime.After(contestElapsed) {
+			ReadTime = ela
 			return QSOs
 		}
 	}
-
 	na := *gZlogqso[0]
 	na.Callsign = "NA"
 	QSOs = append(QSOs, na)

@@ -5,19 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
-type Node struct {
-	hostname string
-	ipaddr   string
-	pstatus  string
-	ppid     int
-}
 type ZlogQso struct {
 	//2015/04/25 21:00 JR2NMJ       599 15H     599 21M     21    -     3.5  CW   1  %%JG1AVR%%         TX#1
 	//2015/04/25 21:01 JH1XDW       59  15H     59  14M     14    -     7    SSB  1  %%JR1TCY%%         TX#2
-	DateQSO  string
-	TimeQSO  string
+	DateTime time.Time
 	Callsign string
 	RSTsent  string
 	NRsent   string
@@ -47,25 +41,6 @@ type Record struct {
 	TX       string
 }
 
-func main333() {
-	data := `2015/04/25 21:00 JR2NMJ       599 15H     599 21M     21    -     3.5  CW   1  %%JG1AVR%%         TX#1`
-	lines := strings.Split(data, "\n")
-
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		record := Record{
-			Date:     fields[0],
-			Time:     fields[1],
-			CallSign: fields[2],
-			RST:      fields[3] + " " + fields[4],
-			Band:     fields[8],
-			Mode:     fields[9],
-			TX:       fields[11],
-		}
-		fmt.Println(record)
-	}
-}
-
 func Readfile() []*ZlogQso {
 	fileName := "2015-ALLJA-0.all" // replace with your file name
 	file, err := os.Open(fileName)
@@ -73,20 +48,19 @@ func Readfile() []*ZlogQso {
 		panic(fmt.Sprintf("error opening %s: %v", fileName, err))
 	}
 	defer file.Close()
-
-	//var nodes []*Node
 	var zlogqso []*ZlogQso
-
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		//nodes = append(nodes, &Node{ipaddr: scanner.Text()})
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 14 {
-			continue
+			continue //skip header
+		}
+		qsodatetime := ToJstTimeFromString(fields[0] + fields[1])
+		if fields[2] == "JH4WBY" {
+			fmt.Println("JH4WBY: ", fields[2], qsodatetime, fields[9])
 		}
 		zlogqso = append(zlogqso, &ZlogQso{
-			DateQSO:  fields[0],
-			TimeQSO:  fields[1],
+			DateTime: qsodatetime,
 			Callsign: fields[2],
 			RSTsent:  fields[3],
 			NRsent:   fields[4],
@@ -112,4 +86,14 @@ func Readfile() []*ZlogQso {
 		fmt.Println(qso)
 	}
 	return zlogqso
+}
+
+func ToJstTimeFromString(timeString string) time.Time {
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	layout := "2006/01/0215:04"
+	ts, err := time.ParseInLocation(layout, timeString, loc)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return ts
 }
