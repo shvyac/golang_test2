@@ -9,8 +9,8 @@ import (
 )
 
 type ZlogQso struct {
-	//2015/04/25 21:00 JR2NMJ       599 15H     599 21M     21    -     3.5  CW   1  %%JG1AVR%%         TX#1
-	//2015/04/25 21:01 JH1XDW       59  15H     59  14M     14    -     7    SSB  1  %%JR1TCY%%         TX#2
+	//2015/04/25 21:00 AAAAAA       599 15H     599 21M     21    -     3.5  CW   1  %%CCCCCC%%         TX#1
+	//2015/04/25 21:01 BBBBBB       59  15H     59  14M     14    -     7    SSB  1  %%CCCCCC%%         TX#2
 	DateTime time.Time
 	Callsign string
 	RSTsent  string
