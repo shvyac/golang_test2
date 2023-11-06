@@ -30,10 +30,11 @@ type Game struct {
 }
 
 type BoxQso struct {
-	BoxNo    int
-	BoxStart time.Time
-	BoxEnd   time.Time
-	BoxBand  string
+	BoxNo     int
+	BoxStart  time.Time
+	BoxEndQso time.Time
+	BoxEnd    time.Time
+	BoxBand   string
 }
 type CallQso struct {
 	CallStart time.Time
@@ -56,7 +57,7 @@ var (
 	acceptKeyin      bool
 	QsoBoxNo         int
 	gfile            *os.File
-	contestTimeStart = time.Date(2015, 4, 26, 02, 0, 0, 0, time.Local) //"2015/04/2521:00"
+	contestTimeStart = time.Date(2015, 4, 26, 04, 0, 0, 0, time.Local) //"2015/04/2521:00"
 	contestTimeEnd   = time.Date(2015, 4, 26, 21, 0, 0, 0, time.Local) //"2015/04/2621:00"
 )
 
@@ -79,7 +80,7 @@ func (g *Game) Update() error {
 	qsonows := checkElapsedTime()
 	for _, qsonow := range qsonows {
 		if qsonow.Callsign != "NA" {
-			fmt.Println("Update--> ", len(qsonows), qsonow.DateTime, qsonow.Callsign, qsonow.Band)
+			//fmt.Println("GetQso--> ", len(qsonows), "QSO", qsonow.DateTime, qsonow.Callsign, qsonow.Band)
 			AddQso(qsonow)
 		}
 	}
@@ -165,61 +166,75 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	acceptKeyin = true
 }
 
-func AddQso(a subpack.ZlogQso) error {
-
-	if a.Callsign == "JH4WBY" {
-		fmt.Print("JH4WBY: ", a.Callsign, a.DateTime, a.Band)
-	}
-	ut := a.DateTime
-	for _, gp := range gPlotQsoBox {
-		if gp.BoxBand == a.Band {
-			if ut.Sub(gp.BoxEnd) <= 10*time.Minute {
-				gp.BoxEnd = ut.Add(time.Minute)
-				if !IsCall(gPlotCall[gp.BoxNo], a.Callsign) {
-					gPlotCall[gp.BoxNo] = append(
-						gPlotCall[gp.BoxNo], &CallQso{CallStart: ut, Callsign: a.Callsign})
+func AddQso(thisQso subpack.ZlogQso) error {
+	thisQsoTime := thisQso.DateTime
+	for _, aBox := range gPlotQsoBox {
+		if aBox.BoxBand == thisQso.Band {
+			if thisQsoTime.Sub(aBox.BoxEndQso) < 10*time.Minute {
+				aBox.BoxEndQso = thisQsoTime.Add(time.Minute) // add 1 minute
+				aBox.BoxEnd = aBox.BoxEndQso
+				if !IsCall(gPlotCall[aBox.BoxNo], thisQso.Callsign) {
+					gPlotCall[aBox.BoxNo] = append(
+						gPlotCall[aBox.BoxNo], &CallQso{CallStart: thisQsoTime,
+							Callsign: thisQso.Callsign})
+					//fmt.Println("Call added: ", thisQsoTime.Format("15:04"), thisQso.Callsign,
+					//	aBox.BoxNo, "Box ", thisQso.Band, "MHz")
+				} else {
+					fmt.Println("Call already exists: ", thisQso.Callsign, aBox.BoxNo, thisQso.Band,
+						thisQsoTime.Format("15:04"))
 				}
 				return nil
 			}
+		} else {
+
 		}
 	}
-	plot := BoxQso{
-		BoxNo:    gLatestWorkingNo,
-		BoxStart: ut,
-		BoxEnd:   ut.Add(time.Minute),
-		BoxBand:  a.Band,
+	newBox := BoxQso{
+		BoxNo:     gLatestWorkingNo,
+		BoxStart:  thisQsoTime,
+		BoxEndQso: thisQsoTime,
+		BoxEnd:    thisQsoTime, //.Add(time.Minute),
+		BoxBand:   thisQso.Band,
 	}
 	QsoBoxNo = -1
-	for i, qb := range gPlotQsoBox {
-		if qb.BoxBand == plot.BoxBand {
-			t1 := qb.BoxStart.Format("15:04")
-			t2 := qb.BoxEnd.Format("15:04")
-			fmt.Println("\t\t\t\tBox: ", i, t1, t2, qb.BoxBand)
-			QsoBoxNo = qb.BoxNo
+	for i, oldBox := range gPlotQsoBox {
+		if oldBox.BoxBand == newBox.BoxBand {
+			t1 := oldBox.BoxStart.Format("15:04")
+			t2 := oldBox.BoxEndQso.Format("15:04")
+			t3 := oldBox.BoxEnd.Format("15:04")
+			fmt.Println("\t\t\t\tBox: ", i, t1, t2, t3, oldBox.BoxBand)
+			QsoBoxNo = oldBox.BoxNo
 		}
 	}
-	gPlotQsoBox = append(gPlotQsoBox, &plot)
-	//fmt.Println("new gPlotqso: ", len(gPlotqso), gPlotqso[len(gPlotqso)-1].WorkingNo, gPlotqso[len(gPlotqso)-1].UnixStart, gPlotqso[len(gPlotqso)-1].UnixEnd, gPlotqso[len(gPlotqso)-1].Band)
+	gPlotQsoBox = append(gPlotQsoBox, &newBox)
+	fmt.Println("new Box: ", gPlotQsoBox[len(gPlotQsoBox)-1].BoxNo, "/", len(gPlotQsoBox),
+		gPlotQsoBox[len(gPlotQsoBox)-1].BoxStart.Format("15:04"),
+		gPlotQsoBox[len(gPlotQsoBox)-1].BoxEndQso.Format("15:04"),
+		gPlotQsoBox[len(gPlotQsoBox)-1].BoxEnd.Format("15:04"),
+		gPlotQsoBox[len(gPlotQsoBox)-1].BoxBand, "MHz")
 	//if IsCall(gPlotCall, gLatestWorkingNo-1, a.Callsign) {
 	gPlotCall[gLatestWorkingNo] = append(gPlotCall[gLatestWorkingNo],
-		&CallQso{CallStart: ut, Callsign: a.Callsign})
+		&CallQso{CallStart: thisQsoTime, Callsign: thisQso.Callsign})
 	gLatestWorkingNo++
 
 	if QsoBoxNo > -1 {
-		for i, pq := range gPlotCall[QsoBoxNo] {
-			s1 := pq.CallStart.Format("15:04")
-			fmt.Println("\t\t\t\tCall: ", QsoBoxNo, i, s1, pq.Callsign, plot.BoxBand)
-			_, err := fmt.Fprintln(gfile, QsoBoxNo, s1, pq.Callsign, plot.BoxBand)
+		//write call info to file
+		for _, aCall := range gPlotCall[QsoBoxNo] {
+			s1 := aCall.CallStart.Format("15:04")
+			//fmt.Println("\t\t\t\tCall: ", QsoBoxNo, i, s1, aCall.Callsign, newBox.BoxBand)
+			_, err := fmt.Fprintln(gfile, QsoBoxNo, s1, aCall.Callsign, newBox.BoxBand)
 			if err != nil {
 				fmt.Println(err)
 			}
 		}
+		//when the box is too small, extend it to 10 minutes
 		for i, box := range gPlotQsoBox {
 			s1 := box.BoxStart
-			s2 := box.BoxEnd
+			s2 := box.BoxEndQso
 			if box.BoxNo == QsoBoxNo && s2.Sub(s1).Minutes() < 10 {
-				box.BoxEnd = box.BoxStart.Add(11 * time.Minute)
-				fmt.Println("\t\t\t\t10Min: ", i, s1, s2, box.BoxEnd.Format("15:04"), box.BoxBand)
+				box.BoxEnd = box.BoxStart.Add(10 * time.Minute)
+				fmt.Println("\t\t\t\t10Min: ", i, s1.Format("15:04--->"), s2.Format("15:04="),
+					box.BoxEnd.Format("15:04"), box.BoxBand)
 			}
 		}
 	}
