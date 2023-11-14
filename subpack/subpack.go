@@ -82,9 +82,9 @@ func Readfile() []*ZlogQso {
 	}
 
 	fmt.Println("ZlogQso: ", len(zlogqso), "records")
-	for _, qso := range zlogqso {
-		fmt.Println(qso)
-	}
+	// for _, qso := range zlogqso {
+	// 	fmt.Println(qso)
+	// }
 	return zlogqso
 }
 
