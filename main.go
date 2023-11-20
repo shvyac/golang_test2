@@ -19,9 +19,9 @@ const (
 	screenWidth      = 1200
 	screenHeight     = 1200
 	space            = 10
-	plotWidth        = screenWidth - space*2
-	plotHeight       = screenHeight - space*2
-	plotRangeMinutes = 60 * 3
+	plotWidth        = screenWidth - space*4
+	plotHeight       = screenHeight - space*6
+	plotRangeMinutes = 60 * 1 // 3 hours
 )
 
 type Game struct {
@@ -53,6 +53,7 @@ var (
 	bands            []string
 	bandPlotWidth    float32
 	contestShowStart time.Time
+	contestShowEnd   time.Time
 	lastKeyinTime    time.Time
 	acceptKeyin      bool
 	QsoBoxNo         int
@@ -68,11 +69,17 @@ func init() {
 	gLatestWorkingNo = 0
 	timelinesDrawed = false
 	bands = []string{"3.5", "7", "14", "21", "28", "50", "se1", "se2"}
-	bandPlotWidth = float32((plotWidth - space*2) / len(bands))
-	contestShowStart = contestTimeStart
+	bandPlotWidth = float32(plotWidth) / float32(len(bands))
+	SetPlotRange(contestTimeStart)
 	gPlotCall = make(map[int][]*CallQso)
 	ReadTime = ""
 	QsoBoxNo = 0
+}
+
+func SetPlotRange(start time.Time) {
+	contestShowStart = start
+	contestShowEnd = contestShowStart.Add(time.Duration(plotRangeMinutes) * time.Minute)
+	return
 }
 
 func (g *Game) Update() error {
@@ -80,42 +87,24 @@ func (g *Game) Update() error {
 	qsonows := checkElapsedTime()
 	for _, qsonow := range qsonows {
 		if qsonow.Callsign != "NA" {
-			//fmt.Println("GetQso--> ", len(qsonows), "QSO", qsonow.DateTime, qsonow.Callsign, qsonow.Band)
 			AddQso(qsonow)
 		}
 	}
-	//g.keys = inpututil.AppendPressedKeys(g.keys[:0])
 	// KeyArrowDown
 	if acceptKeyin && inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
 		acceptKeyin = false
 		lastKeyinTime = time.Now()
 		fmt.Println("KeyArrowDown", lastKeyinTime.Format("2006/01/02 15:04:05"))
-		contestShowStart = contestShowStart.Add(time.Hour)
-		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
-
-		if contestShowStart.Before(contestTimeStart) {
-			//contestShowStart = ToTime(contestTimeStart)
-		} else if contestShowStart.After(contestTimeEnd) {
-			//contestShowStart = ToTime(contestTimeEnd)
-		}
-		//fmt.Println(contestShowStart.Format("2006/01/02 15:04"))
+		SetPlotRange(contestShowStart.Add(time.Hour))
 		timelinesDrawed = false
 	}
 	// KeyArrowUp
 	if acceptKeyin && inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
 		acceptKeyin = false
 		lastKeyinTime = time.Now()
-		//fmt.Println("KeyArrowUp", lastInputTime.Format("2006/01/02 15:04:05"))
-		contestShowStart = contestShowStart.Add(-time.Hour)
-		//fmt.Println("new time---", contestShowStart.Format("2006/01/02 15:04"))
+		SetPlotRange(contestShowStart.Add(-time.Hour))
 		timelinesDrawed = false
 	}
-
-	// if !acceptInput && time.Since(lastInputTime).Seconds() > 1 {
-	// 	acceptInput = true
-	// 	//fmt.Println("acceptInput = true", time.Now().Format("2006/01/02 15:04:05"))
-	// }
-
 	return nil
 }
 
@@ -125,39 +114,50 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	screen.DrawImage(accImage, &ebiten.DrawImageOptions{})
 
-	for _, gp := range gPlotQsoBox {
+	for _, box := range gPlotQsoBox {
 		xpos := float32(space * 3)
 		ypos := float32(space * 3)
 		width := bandPlotWidth
 		widthPad := width / 10
-		te := gp.BoxEnd
-		ts := gp.BoxStart
+		xpos += widthPad
+		te := box.BoxEnd
+		ts := box.BoxStart
+		if te.Before(contestShowStart) && ts.Before(contestShowStart) {
+			continue
+		}
+		if te.After(contestShowEnd) && ts.After(contestShowEnd) {
+			continue
+		}
 		boxHeight := te.Sub(ts)
-		cs := contestTimeStart //time.Unix(ToUnixTime(contestTimeStart), 0)
+		cs := contestTimeStart
 		cs = time.Unix(ToUnixTimeFromString(contestShowStart.Format("2006/01/0215:04")), 0)
-		//cs2 := contestShowStart
-		//fmt.Println("cs: ", cs.Format("2006/01/02 15:04 "), cs2.Format("2006/01/02 15:04"))
+		cs = contestShowStart
 		boxStart := ts.Sub(cs)
 		height := boxHeight.Minutes() * (plotHeight / plotRangeMinutes)
-		//fmt.Println(te.Format("15:04"), ts.Format("15:04"), cs.Format("15:04"))
-		//fmt.Printf("gp.UnixEnd: %d, gp.UnixStart: %d, height: %d\n", gp.UnixEnd, gp.UnixStart, height)
 		for i, ba := range bands {
-			if gp.BoxBand == ba {
-				xpos += width * float32(i) // + widthPad
+			if box.BoxBand == ba {
+				xpos += width * float32(i)
 				ypos += float32(boxStart.Minutes()) * float32(plotHeight/plotRangeMinutes)
-				//fmt.Println("ts.Minute() ", xpos, ypos, ts.Minute(), height)
-				vector.StrokeRect(screen, float32(xpos), float32(ypos),
-					float32(width-2*widthPad), float32(height), 1, color.RGBA{0xff, 0xff, 0xff, 0xff}, true)
-				startjst := gp.BoxStart
+				vector.StrokeRect(screen, xpos, ypos,
+					(width - 2*widthPad), float32(height), 1, color.RGBA{0xff, 0xff, 0xff, 0xff}, true)
+				startjst := box.BoxStart
 				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", startjst.Format("15:04")), int(xpos), int(ypos))
-				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", len(gPlotCall[gp.BoxNo])), int(xpos+40), int(ypos))
-				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%v", gp.BoxEnd.Sub(gp.BoxStart)), int(xpos+0), int(ypos+10))
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", len(gPlotCall[box.BoxNo])), int(xpos+40), int(ypos))
+				ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%v", box.BoxEnd.Sub(box.BoxStart)), int(xpos+0), int(ypos+10))
+
+				for _, qso := range gPlotCall[box.BoxNo] {
+					call := qso.Callsign
+					dt := qso.CallStart.Sub(box.BoxStart)
+					ofy := dt.Minutes() * (plotHeight / plotRangeMinutes)
+					//qsotime := qso.CallStart.Minute()
+					yposcall := float32(ofy) + ypos
+					//ypos += float32(qso.CallStart.Minute()) * float32(plotHeight/plotRangeMinutes)
+					//if qsotime.Minute() == te.Minute() {
+					ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", call), int(xpos+60), int(yposcall))
+					//}
+					//ypos += 10
+				}
 			}
-		}
-		for _, pq := range gPlotCall[gp.BoxNo] {
-			call := pq.Callsign
-			ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s", call), int(xpos+60), int(ypos))
-			ypos += 10
 		}
 	}
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("ActualTPS: %0.2f", ebiten.ActualTPS()))
@@ -281,33 +281,28 @@ func ToJstTimeFromUnix(unixtime int64) time.Time {
 
 func DrawTimelines(screen *ebiten.Image) {
 	accImage.Clear()
-	//accImage.Fill(color.RGBA{0xff, 0xff, 0xff, 0xff}) // white
-	//screen.Fill(color.RGBA{0xff, 0xff, 0xff, 0xff})   // white
 	strokeWidth := float32(.5)
-	// loc, _ := time.LoadLocation("Asia/Tokyo")
-	// layout := "2006/01/0215:04"
-	// ts, err := time.ParseInLocation(layout, contestTimeStart, loc)
 	ts := contestShowStart
-	//fmt.Print("ts: ", ts.Hour(), ts.Minute(), ", ")
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-	ypos := float32(space * 3)
-	//minutes := plotRangeMinutes
-	step_y := float32(plotHeight / plotRangeMinutes)
-	// horizontal lines, hours and minutes
 	xpos := float32(space * 3)
+	bandsWidth := bandPlotWidth * float32(len(bands))
+	space3 := float32(space * 3)
+	ypos := float32(space * 3)
+	step_y := float32(plotHeight / plotRangeMinutes)
 	for i := 0; i <= plotRangeMinutes; i++ {
-		vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), strokeWidth,
+		xpos = float32(space * 3)
+		// horizontal minutes
+		vector.StrokeLine(accImage, xpos, ypos, space3+bandsWidth, ypos, strokeWidth,
 			color.RGBA{0x80, 0x80, 0x80, 0xff}, true)
 		if i%60 == 0 {
 			xpos = float32(space)
-			vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), 1,
+			// horizontal hours
+			vector.StrokeLine(accImage, xpos, ypos, space3+bandsWidth, ypos, 1,
 				color.RGBA{0x00, 0xff, 0x00, 0xff}, true)
 			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%02d:00", ts.Hour()), int(5), int(ypos-10))
 		} else if i%10 == 0 {
 			xpos = float32(space * 2)
-			vector.StrokeLine(accImage, xpos, (ypos), space+plotWidth, (ypos), strokeWidth,
+			// horizontal 10 minutes
+			vector.StrokeLine(accImage, xpos, ypos, space3+bandsWidth, ypos, strokeWidth,
 				color.RGBA{0x80, 0x80, 0x00, 0xff}, true)
 			ebitenutil.DebugPrintAt(accImage, fmt.Sprintf(":%02d", ts.Minute()), int(10), int(ypos-10))
 		}
@@ -315,15 +310,16 @@ func DrawTimelines(screen *ebiten.Image) {
 		ypos += step_y
 	}
 	// vertical lines, bands
-	//xpos = space * 3
+	xpos = float32(space * 3)
 	xinc := bandPlotWidth
+	ypos = float32(space * 3)
 	for _, ba := range bands {
-		vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth,
+		vector.StrokeLine(accImage, xpos, ypos, xpos, float32(plotHeight)+ypos, strokeWidth,
 			color.RGBA{0x80, 0x80, 0x00, 0xff}, true)
 		ebitenutil.DebugPrintAt(accImage, fmt.Sprintf("%s", ba), int(xpos+xinc/2), space)
 		xpos += xinc
 	}
-	vector.StrokeLine(accImage, float32(xpos), space*3, float32(xpos), space+plotHeight, strokeWidth,
+	vector.StrokeLine(accImage, xpos, ypos, xpos, float32(plotHeight)+ypos, strokeWidth,
 		color.RGBA{0x80, 0x80, 0x00, 0xff}, true)
 	timelinesDrawed = true
 }
